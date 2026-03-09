@@ -258,7 +258,7 @@ def enhance_scenes_with_llm(scenes: List[Dict], router) -> List[Dict]:
     Sequential is much more stable for Free Tier rate limits.
     """
     from concurrent.futures import ThreadPoolExecutor
-    BATCH_SIZE = 30 # Large batches to minimize total API calls
+    BATCH_SIZE = 20 # Perfectly tuned for 30-second performance + TPM limits
     enhanced_scenes = []
     
     # We'll use a local list to collect results to ensure order doesn't break
@@ -294,9 +294,9 @@ def enhance_scenes_with_llm(scenes: List[Dict], router) -> List[Dict]:
                 s['location_detail'] = s['location']
             return (batch, "failed")
 
-    # Use max_workers=1 to be very stable against 429 errors
-    logger.info(f"Starting sequential enhancement for {len(batches)} batches...")
-    with ThreadPoolExecutor(max_workers=1) as executor:
+    # Use max_workers=2 to hit the 30-second target while staying stable
+    logger.info(f"Starting parallel enhancement for {len(batches)} batches...")
+    with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(process_batch, batches))
 
     # Re-assemble
