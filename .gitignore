@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+.vscode/
+.idea/
+venv/
+node_modules/
+backend/uploads/*
+backend/__pycache__/
+static/.DS_Store
+.env
