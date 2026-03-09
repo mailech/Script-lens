@@ -338,16 +338,28 @@ function renderStats(stats) {
       <div class="stat-label">Characters</div>
     </div>
     <div class="stat-card green">
-      <div class="stat-value">${stats.unique_locations || 0}</div>
+      <div class="stat-value">${stats.locations || stats.unique_locations || 0}</div>
       <div class="stat-label">Locations</div>
     </div>
-    <div class="stat-card orange">
-      <div class="stat-value">${stats.day_scenes || 0}</div>
-      <div class="stat-label">Day Scenes</div>
+    <div class="stat-card gold" style="border-bottom: 3px solid var(--accent);">
+      <div class="stat-value">${stats.props_count || 0}</div>
+      <div class="stat-label">Props</div>
     </div>
-    <div class="stat-card purple">
-      <div class="stat-value">${stats.night_scenes || 0}</div>
-      <div class="stat-label">Night Scenes</div>
+    <div class="stat-card" style="border-bottom: 3px solid #ffa500;">
+      <div class="stat-value">${stats.vehicles || 0}</div>
+      <div class="stat-label">Vehicles</div>
+    </div>
+    <div class="stat-card" style="border-bottom: 3px solid #22c55e;">
+      <div class="stat-value">${stats.animals || 0}</div>
+      <div class="stat-label">Animals</div>
+    </div>
+    <div class="stat-card" style="border-bottom: 3px solid #ef4444;">
+      <div class="stat-value">${stats.stunts || 0}</div>
+      <div class="stat-label">Stunt Scenes</div>
+    </div>
+    <div class="stat-card" style="border-bottom: 3px solid #3b82f6;">
+      <div class="stat-value">${stats.vfx_scenes || 0}</div>
+      <div class="stat-label">VFX Shots</div>
     </div>
   `;
 }
@@ -366,24 +378,86 @@ function renderSceneList(scenes) {
 }
 
 function buildSceneCard(scene) {
-    const tod = (scene.time_of_day || '').toUpperCase();
-    const intExt = (scene.int_ext || '').replace('-', '/');
+    const s = scene;
+    const tod = (s.time_of_day || '').toUpperCase();
+    const intExt = (s.int_ext || '').replace('-', '/');
     const todTag = getTimeTag(tod);
 
-    const chars = scene.characters || [];
-    const charChips = chars.map(c => `<span class="char-chip">${c}</span>`).join('');
-    const charDisplay = chars.length > 0 ? charChips : '<span style="color:var(--text-muted);font-size:13px;">—</span>';
+    const chars = s.characters || [];
 
-    const summary = scene.summary || '';
-    const location = scene.location_detail || scene.location || '—';
+    // Client-side garbled text detector (defense-in-depth)
+    function isGarbled(str) {
+        const alpha = [...str].filter(c => /[a-zA-Z\u00C0-\u024F]/.test(c));
+        if (!alpha.length) return false;
+        const garbled = alpha.filter(c => c.charCodeAt(0) >= 0x00C0 && c.charCodeAt(0) <= 0x024F);
+        return garbled.length / alpha.length > 0.35;
+    }
+
+    // Non-name words that should NEVER appear as a character chip
+    const NON_NAME_WORDS = new Set([
+        'N/A', 'NA', 'NONE', 'NULL', '-', '—', 'SCENE', 'CUT', 'FADE', 'EXT', 'INT',
+        'DAY', 'NIGHT', 'MORNING', 'EVENING', 'CAMERA', 'COLLEGE', 'STUDENTS', 'PEOPLE',
+        'CROWD', 'CONTINUED', 'TRANSITION', 'LOOKING', 'GOING', 'DISSOLVE'
+    ]);
+
+    // Filter garbled, numeric, timecode, and non-name chars
+    const cleanChars = chars.filter(c => {
+        if (!c || !c.trim()) return false;
+        const trimmed = c.trim();
+        // Reject pure numbers or timecodes
+        if (/^[\d\s.:,\-]+$/.test(trimmed)) return false;
+        if (/^\d{2}[.:]\d{2}/.test(trimmed)) return false;
+        // Reject very short strings (single char or number)
+        if (trimmed.length < 2) return false;
+        // Reject boilerplate words
+        if (NON_NAME_WORDS.has(trimmed.toUpperCase())) return false;
+        // Reject garbled text
+        if (isGarbled(trimmed)) return false;
+        return true;
+    });
+
+    // Smart chip renderer: handles non-Latin scripts via Noto fonts
+    function makeCharChip(name) {
+        const isNonLatin = /[^\x00-\x7F]/.test(name) && !isGarbled(name);
+        const fontStyle = isNonLatin
+            ? 'font-family:"Noto Sans Telugu","Noto Sans Devanagari","Noto Sans Tamil","Noto Sans",sans-serif;font-size:12px;'
+            : '';
+        return `<span class="char-chip" style="${fontStyle}" title="${escapeHtml(name)}">${escapeHtml(name)}</span>`;
+    }
+
+    const charChips = cleanChars.map(makeCharChip).join('');
+    const charDisplay = cleanChars.length > 0 ? charChips : '<span style="color:var(--text-muted);font-size:13px;">Characters extracted by LLM</span>';
+
+    // Clean summary text from garbled characters
+    const rawSummary = s.summary || '';
+    const summary = isGarbled(rawSummary)
+        ? rawSummary.replace(/[^\x00-\x7F\u0C00-\u0C7F\u0900-\u097F\u0B80-\u0BFF\s.,!?'"()\-:]/g, '').trim() || `Scene at ${s.location_detail || s.location || 'unknown location'}.`
+        : rawSummary;
+
+    const location = s.location_detail || s.location || '—';
+
+    // Professional Schematic Mapping
+    const bts = s.bts_requirements || {};
+    const formatVal = (v) => {
+        if (Array.isArray(v)) return v.length > 0 ? v.join(', ') : 'None';
+        if (typeof v === 'object' && v !== null) {
+            try { return JSON.stringify(v); } catch (e) { return String(v); }
+        }
+        return v || 'None';
+    };
+
+    const props = Array.isArray(s.props) ? s.props : [];
+    const vehicles = Array.isArray(s.vehicles) ? s.vehicles : [];
+    const animals = Array.isArray(s.animals) ? s.animals : [];
+    const env = Array.isArray(s.environment) ? s.environment : [];
 
     return `
-    <div class="scene-card" id="scene-card-${scene.scene_number}" onclick="toggleScene(${scene.scene_number})">
+    <div class="scene-card" id="scene-card-${s.scene_number}" onclick="toggleScene(${s.scene_number})">
       <div class="scene-header">
-        <div class="scene-num">${scene.scene_number}</div>
+        <div class="scene-num">${escapeHtml(s.script_scene_number || s.scene_number)}</div>
         <div class="scene-main">
-          <div class="scene-heading-text" title="${escapeHtml(scene.heading || '')}">
-            ${escapeHtml(scene.heading || `Scene ${scene.scene_number}`)}
+          <div class="scene-heading-text" title="${escapeHtml(s.heading || '')}">
+            ${escapeHtml(s.heading)}
           </div>
           <div class="scene-meta">
             <span class="scene-tag ${todTag}">
@@ -393,29 +467,113 @@ function buildSceneCard(scene) {
               📍 ${escapeHtml(location)}
             </span>
             <span class="scene-tag tag-chars">
-              👥 ${scene.character_count || chars.length || 0} chars
+              👥 ${s.character_count || chars.length || 0} chars
             </span>
+            <span class="scene-tag" style="background:rgba(168,85,247,0.1); color:#a855f7;">
+              🎭 ${escapeHtml(s.tone || 'Neutral Tone')}
+            </span>
+            ${s.location_permit ? `
+            <span class="scene-tag" style="background:rgba(239,68,68,0.15); color:#ef4444; border:1px solid rgba(239,68,68,0.35); font-weight:600;">
+              🚨 PUBLIC LOCATION — PERMIT NEEDED
+            </span>` : (s.shooting_type && s.shooting_type !== 'INTERIOR' ? `
+            <span class="scene-tag" style="background:rgba(16,185,129,0.1); color:#10b981;">
+              🎬 ${escapeHtml(s.shooting_type)}
+            </span>` : '')}
           </div>
         </div>
         <div class="scene-chevron">▾</div>
       </div>
       <div class="scene-body">
         <div class="scene-body-grid">
-          <div class="scene-body-section">
-            <div class="scene-body-label">Characters (${chars.length})</div>
-            <div class="char-chips">${charDisplay}</div>
+          <div class="scene-body-section main-info">
+            <div class="scene-body-label">Director's Analysis</div>
+            <div class="summary-text">${escapeHtml(summary)}</div>
+            
+            <div class="mt-3">
+                <div class="scene-body-label">Characters & Environment</div>
+                <div class="char-chips">${charDisplay}</div>
+                <div class="mt-2">
+                    <span class="field-label">🌍 Environment:</span>
+                    <span class="field-val">${formatVal(env)}</span>
+                </div>
+            </div>
+
+                <div class="mt-3">
+                    <div class="scene-body-label">Wardrobe &amp; Extra Talent</div>
+                    <div class="prod-field">
+                        <span class="field-label"><i class="fas fa-tshirt"></i> Wardrobe:</span>
+                        <div class="field-val" style="color:#a855f7; font-weight:500;">${escapeHtml(s.wardrobe || 'Standard')}</div>
+                    </div>
+                    <div class="prod-field mt-1">
+                        <span class="field-label"><i class="fas fa-users"></i> Actors Needed:</span>
+                        <div class="field-val">
+                          <strong>${bts.actors_required || chars.length}</strong> named actors
+                          &nbsp;|&nbsp;
+                          <strong style="color:${(bts.extras_required || 0) > 0 ? '#f59e0b' : 'var(--text-muted)'}">
+                            ${bts.extras_required || 0}
+                          </strong> extras
+                        </div>
+                    </div>
+                    ${(s.extras && s.extras.length > 0) ? `
+                    <div class="prod-field mt-1">
+                        <span class="field-label" style="margin-bottom:4px;">🎭 Background Roles:</span>
+                        <div class="char-chips" style="margin-top:4px;">
+                          ${s.extras.map(e => `<span class="char-chip" style="background:rgba(245,158,11,0.15);color:#f59e0b;border-color:rgba(245,158,11,0.3);">${escapeHtml(e)}</span>`).join('')}
+                        </div>
+                    </div>` : ''}
+                </div>
           </div>
-          <div class="scene-body-section">
-            <div class="scene-body-label">Location Type</div>
-            <div style="font-size:14px; color:var(--text-secondary);">
-              ${intExt || '—'} &nbsp;·&nbsp; ${escapeHtml(location)}
+          
+          <div class="scene-body-section production-info">
+            <div class="scene-body-label">BTS & Department Logistics</div>
+            <div class="prod-breakdown-card">
+                <div class="prod-field">
+                    <span class="field-label"><i class="fas fa-box"></i> Physical Props:</span>
+                    <div class="prop-tags">
+                        ${props.map(p => `<span class="prop-tag">${escapeHtml(p)}</span>`).join('') || '<span class="none">None</span>'}
+                    </div>
+                </div>
+                ${vehicles.length > 0 || animals.length > 0 ? `
+                <div class="prod-field mt-2">
+                    <span class="field-label"><i class="fas fa-car-side"></i> Transport/Animals:</span>
+                    <div class="prop-tags">
+                        ${vehicles.map(v => `<span class="prop-tag" style="background:rgba(255,165,0,0.1); color:#ffa500;">${escapeHtml(v)}</span>`).join('')}
+                        ${animals.map(a => `<span class="prop-tag" style="background:rgba(34,197,94,0.1); color:#22c55e;">🐾 ${escapeHtml(a)}</span>`).join('')}
+                    </div>
+                </div>` : ''}
+                
+                <div class="prod-field mt-3">
+                    <div class="scene-body-label" style="font-size:10px; opacity:0.6; text-transform:uppercase; margin-bottom:5px;">Professional Logistics</div>
+                    <div class="prod-logistics-grid">
+                        <div class="log-item">
+                            <span class="field-label">Location:</span>
+                            <div class="field-val" style="font-size:10px;">${escapeHtml(bts.location_requirements || 'Standard')}</div>
+                        </div>
+                        <div class="log-item">
+                            <span class="field-label">Lighting:</span>
+                            <div class="field-val" style="font-size:10px;">${escapeHtml(bts.lighting_requirements || 'Standard')}</div>
+                        </div>
+                        <div class="log-item">
+                            <span class="field-label">Sound:</span>
+                            <div class="field-val" style="font-size:10px;">${escapeHtml(bts.sound_requirements || 'Sync')}</div>
+                        </div>
+                        <div class="log-item">
+                            <span class="field-label">Camera:</span>
+                            <div class="field-val" style="font-size:10px;">${escapeHtml(bts.camera_suggestions || 'Static')}</div>
+                        </div>
+                    </div>
+                    <div class="prod-field mt-2">
+                        <span class="field-label"><i class="fas fa-shield-alt"></i> Safety/Concerns:</span>
+                        <div class="field-val" style="color:#ef4444; font-size:11px;">${formatVal(bts.safety_concerns)}</div>
+                    </div>
+                </div>
+
+                <div class="mt-3 d-flex flex-wrap gap-1">
+                    ${s.stunts ? `<span class="scene-tag" style="background:#ef4444; color:white; border:none; font-size:10px;">🔥 STUNTS: ${escapeHtml(bts.stunt_coordination || 'YES')}</span>` : ''}
+                    ${s.vfx ? `<span class="scene-tag" style="background:#3b82f6; color:white; border:none; font-size:10px;">✨ VFX: ${escapeHtml(bts.vfx_requirements || 'YES')}</span>` : ''}
+                </div>
             </div>
           </div>
-          ${summary ? `
-          <div class="scene-summary">
-            <div class="scene-body-label">Scene Summary</div>
-            ${escapeHtml(summary)}
-          </div>` : ''}
         </div>
       </div>
     </div>

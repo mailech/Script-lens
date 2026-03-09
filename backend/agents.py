@@ -1,6 +1,6 @@
 """
 Multi-Agent LLM Manager with Fallback Chain
-Priority: Gemini 1.5 Flash → Groq Llama3 → OpenAI GPT-4o-mini
+Priority: OpenAI GPT-4o-mini → Groq Llama3 → Gemini 1.5 Flash
 """
 
 import os
@@ -164,13 +164,14 @@ class MultiAgentRouter:
     def __init__(self, api_keys: dict = None):
         keys = api_keys or {}
         self.agents = [
+            OpenAIAgent(keys.get("openai")),
+            GroqAgent(keys.get("groq")),
             GeminiAgent(keys.get("gemini")),
             ClaudeAgent(keys.get("anthropic")),
-            GroqAgent(keys.get("groq")),
-            OpenAIAgent(keys.get("openai")),
         ]
         self.last_index = -1 
         self.cooldowns = {} # provider_name -> timestamp
+        self.exhausted = set() # Agents that hit daily limits or are invalid
 
     def generate(self, prompt: str) -> Tuple[str, str]:
         """
@@ -186,12 +187,16 @@ class MultiAgentRouter:
             curr_idx = (start_idx + i) % len(self.agents)
             agent = self.agents[curr_idx]
             
+            # Skip exhausted or invalid agents
+            if agent.name in self.exhausted:
+                continue
+
             # Check cooldown
             if agent.name in self.cooldowns:
                 if now < self.cooldowns[agent.name]:
-                    continue # Skip this agent, still cooling down
+                    continue 
                 else:
-                    del self.cooldowns[agent.name] # Cooldown expired
+                    del self.cooldowns[agent.name]
 
             if not agent.is_configured():
                 errors.append(f"{agent.name}: not configured")
@@ -204,19 +209,22 @@ class MultiAgentRouter:
                 return result, agent.name
             except Exception as e:
                 err_msg = str(e)
-                # If it's a rate limit error, wait 2 seconds and retry ONCE before failing over
-                if "429" in err_msg or "rate_limit" in err_msg.lower() or "quota" in err_msg.lower():
-                    logger.warning(f"Rate limit hit for {agent.name}. Waiting 2s for retry...")
-                    time.sleep(2)
-                    try:
-                        result = agent.generate(prompt)
-                        self.last_index = curr_idx
-                        return result, agent.name
-                    except Exception as e2:
-                        err_msg = str(e2)
                 
-                logger.warning(f"Agent {agent.name} failed: {err_msg}. Putting on 60s cooldown.")
-                self.cooldowns[agent.name] = now + 60
+                # Handle Permanent Failures (Invalid Key or Daily Quota)
+                if "401" in err_msg or "invalid_api_key" in err_msg.lower():
+                    logger.error(f"Agent {agent.name} has an INVALID KEY. Disabling.")
+                    self.exhausted.add(agent.name)
+                elif "quota" in err_msg.lower() and ("day" in err_msg.lower() or "per project" in err_msg.lower()):
+                    logger.error(f"Agent {agent.name} DAILY QUOTA EXHAUSTED. Disabling.")
+                    self.exhausted.add(agent.name)
+                
+                # Handle Temporary Rate Limits
+                elif "429" in err_msg or "rate_limit" in err_msg.lower():
+                    # For Groq/Gemini temporary limits, put on short cooldown
+                    wait_time = 30 # Default wait
+                    logger.warning(f"Agent {agent.name} rate limited. 30s cooldown.")
+                    self.cooldowns[agent.name] = now + wait_time
+                
                 errors.append(f"{agent.name}: {err_msg}")
 
         raise RuntimeError(
