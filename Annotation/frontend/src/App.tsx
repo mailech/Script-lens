@@ -63,16 +63,60 @@ function CopyButton({ text }: { text: string }) {
 }
 
 /* ── Single Scene Card ──────────────────────────────────── */
-function SceneCard({ ann, index }: { ann: Annotation; index: number }) {
+function SceneCard({ ann, index, selectedLang }: { ann: Annotation; index: number; selectedLang: string }) {
     const isProcessing = ann.status === 'processing' || ann.status === 'pending';
     const isError = ann.status === 'error';
 
+    // Per-card translation state
+    const [translatedAnn, setTranslatedAnn] = useState<Annotation | null>(null);
+    const [isTranslating, setIsTranslating] = useState(false);
+
+    useEffect(() => {
+        if (!ann || isProcessing || isError) return;
+        if (selectedLang === 'English') {
+            setTranslatedAnn(null);
+            return;
+        }
+
+        // Let's translate this specific scene card!
+        const translate = async () => {
+            setIsTranslating(true);
+            try {
+                // Strip unnecessary metadata for the translator engine
+                const { image_id, page_number, image_index, filename, status, error_message, ...sceneData } = ann;
+
+                const res = await fetch('/api/translate_scene', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        language: selectedLang,
+                        scene_data: sceneData
+                    })
+                });
+
+                if (res.ok) {
+                    const translatedData = await res.json();
+                    setTranslatedAnn({ ...ann, ...translatedData });
+                }
+            } catch (err) {
+                console.error("Translation error", err);
+            } finally {
+                setIsTranslating(false);
+            }
+        };
+
+        translate();
+    }, [selectedLang, ann, isProcessing, isError]);
+
+    // Choose which annotation to render (Original vs Translated)
+    const displayAnn = translatedAnn || ann;
+
     const fullSceneText = [
-        ann.scene_heading,
+        displayAnn.scene_heading,
         '',
-        ann.scene_description,
+        displayAnn.scene_description,
         '',
-        ann.action_lines,
+        displayAnn.action_lines,
     ].filter(Boolean).join('\n');
 
     return (
@@ -84,9 +128,9 @@ function SceneCard({ ann, index }: { ann: Annotation; index: number }) {
         >
             {/* Scene number header bar */}
             <div className="scene-number-bar">
-                <span>SCENE {String(index + 1).padStart(3, '0')}  —  PAGE {ann.page_number}</span>
-                {ann.scene_type && (
-                    <span className="scene-type-badge">{ann.scene_type}</span>
+                <span>SCENE {String(index + 1).padStart(3, '0')}  —  PAGE {displayAnn.page_number}</span>
+                {displayAnn.scene_type && (
+                    <span className="scene-type-badge">{displayAnn.scene_type}</span>
                 )}
             </div>
 
@@ -101,7 +145,7 @@ function SceneCard({ ann, index }: { ann: Annotation; index: number }) {
                     ) : (
                         <img
                             className="scene-image"
-                            src={`/images/${ann.filename}`}
+                            src={`/images/${displayAnn.filename}`}
                             alt={`Scene ${index + 1}`}
                             loading="lazy"
                         />
@@ -113,85 +157,92 @@ function SceneCard({ ann, index }: { ann: Annotation; index: number }) {
                     {isProcessing && (
                         <div className="processing-overlay">
                             <div className="spinner" />
-                            <span>GEMINI IS WRITING THE SCENE...</span>
+                            <span>A.I. IS WRITING THE SCENE...</span>
+                        </div>
+                    )}
+
+                    {isTranslating && (
+                        <div className="processing-overlay" style={{ background: 'rgba(20,20,20,0.85)' }}>
+                            <div className="spinner" />
+                            <span>Translating to {selectedLang}...</span>
                         </div>
                     )}
 
                     {isError && (
                         <div className="processing-overlay" style={{ color: '#c0392b' }}>
-                            <span>⚠ ERROR PROCESSING THIS SCENE — {ann.error_message || 'Unknown error'}</span>
+                            <span>⚠ ERROR PROCESSING THIS SCENE — {displayAnn.error_message || 'Unknown error'}</span>
                         </div>
                     )}
 
-                    {ann.status === 'completed' && (
+                    {displayAnn.status === 'completed' && !isTranslating && (
                         <>
                             {/* INT./EXT. heading */}
-                            {ann.scene_heading && (
+                            {displayAnn.scene_heading && (
                                 <div className="screenplay-heading">
-                                    <span>{ann.scene_heading}</span>
+                                    <span>{displayAnn.scene_heading}</span>
                                     <CopyButton text={fullSceneText} />
                                 </div>
                             )}
 
                             {/* Scene description */}
-                            {ann.scene_description && (
-                                <p className="scene-description-block">{ann.scene_description}</p>
+                            {displayAnn.scene_description && (
+                                <p className="scene-description-block">{displayAnn.scene_description}</p>
                             )}
 
                             {/* Action lines */}
-                            {ann.action_lines && (
-                                <blockquote className="action-block">{ann.action_lines}</blockquote>
+                            {displayAnn.action_lines && (
+                                <blockquote className="action-block">{displayAnn.action_lines}</blockquote>
                             )}
 
                             {/* Mood + Lighting */}
                             <div className="meta-grid">
-                                {ann.mood_and_tone && (
+                                {displayAnn.mood_and_tone && (
                                     <div className="meta-item">
                                         <div className="meta-label">🎭 Mood & Tone</div>
-                                        <div className="meta-value">{ann.mood_and_tone}</div>
+                                        <div className="meta-value">{displayAnn.mood_and_tone}</div>
                                     </div>
                                 )}
-                                {ann.lighting_notes && (
+                                {displayAnn.lighting_notes && (
                                     <div className="meta-item">
                                         <div className="meta-label">💡 Lighting (DOP)</div>
-                                        <div className="meta-value">{ann.lighting_notes}</div>
+                                        <div className="meta-value">{displayAnn.lighting_notes}</div>
                                     </div>
                                 )}
-                                {ann.color_palette && (
+                                {displayAnn.color_palette && (
                                     <div className="meta-item">
                                         <div className="meta-label">🎨 Color Palette</div>
-                                        <div className="meta-value">{ann.color_palette}</div>
+                                        <div className="meta-value">{displayAnn.color_palette}</div>
                                     </div>
                                 )}
-                                {ann.characters_or_subjects && (
+                                {displayAnn.characters_or_subjects && (
                                     <div className="meta-item">
                                         <div className="meta-label">🎬 Subjects</div>
-                                        <div className="meta-value">{ann.characters_or_subjects}</div>
+                                        <div className="meta-value">{displayAnn.characters_or_subjects}</div>
                                     </div>
                                 )}
                             </div>
 
                             {/* Visual elements */}
-                            {ann.visual_elements && ann.visual_elements.length > 0 && (
+                            {displayAnn.visual_elements && displayAnn.visual_elements.length > 0 && (
                                 <div className="tag-row">
-                                    {ann.visual_elements.map((el, i) => (
+                                    {displayAnn.visual_elements.map((el, i) => (
                                         <span key={i} className="tag">{el}</span>
                                     ))}
                                 </div>
                             )}
 
                             {/* Text in scene */}
-                            {ann.text_in_scene && ann.text_in_scene.length > 0 && ann.text_in_scene[0] !== '' && (
+                            {displayAnn.text_in_scene && displayAnn.text_in_scene.length > 0 && displayAnn.text_in_scene[0] !== '' && (
                                 <div className="detected-text-block">
-                                    📜 &nbsp;{ann.text_in_scene.join(' · ')}
+                                    📜 &nbsp;{displayAnn.text_in_scene.join(' · ')}
                                 </div>
                             )}
 
                             {/* Director's note */}
-                            {ann.director_notes && (
+                            {displayAnn.director_notes && (
                                 <div className="directors-note">
                                     <div className="directors-note-label">🎬 Director's Note</div>
-                                    <p className="directors-note-text">{ann.director_notes}</p>
+                                    <p className="directors-note-text">{displayAnn.director_notes}</p>
                                 </div>
                             )}
                         </>
@@ -203,7 +254,13 @@ function SceneCard({ ann, index }: { ann: Annotation; index: number }) {
 }
 
 /* ── Main App ───────────────────────────────────────────── */
+const LANGUAGES = [
+    "English", "Hindi", "Bengali", "Telugu", "Marathi", "Tamil",
+    "Urdu", "Gujarati", "Kannada", "Odia", "Malayalam", "Punjabi", "Assamese"
+];
+
 export default function App() {
+    const [selectedLang, setSelectedLang] = useState("English");
     const [file, setFile] = useState<File | null>(null);
     const [taskId, setTaskId] = useState<string | null>(null);
     const [status, setStatus] = useState<string | null>(null);
@@ -441,6 +498,14 @@ export default function App() {
                                 </div>
 
                                 <div className="toolbar-actions">
+                                    <select
+                                        className="btn btn-ghost btn-sm"
+                                        value={selectedLang}
+                                        onChange={e => setSelectedLang(e.target.value)}
+                                        style={{ marginRight: '8px', background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid rgba(255,255,255,0.1)', outline: 'none' }}
+                                    >
+                                        {LANGUAGES.map(lang => <option key={lang} value={lang} style={{ color: '#000' }}>{lang}</option>)}
+                                    </select>
                                     <button
                                         className="btn btn-ghost btn-sm"
                                         onClick={() => download('screenplay')}
@@ -458,7 +523,7 @@ export default function App() {
 
                             <div className="scenes-list">
                                 {filtered.map((ann, i) => (
-                                    <SceneCard key={ann.image_id} ann={ann} index={i} />
+                                    <SceneCard key={ann.image_id} ann={ann} index={i} selectedLang={selectedLang} />
                                 ))}
                             </div>
                         </motion.section>

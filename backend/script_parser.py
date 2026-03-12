@@ -8,13 +8,13 @@ Movie Script PDF Parser
 import re
 import json
 import logging
+import fitz  # PyMuPDF
+import docx
+import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any, Tuple
 
 logger = logging.getLogger(__name__)
-
-# #########################################
-# PDF Text Extraction
-# #########################################
 
 def _ratio_garbled(text: str) -> float:
     """
@@ -104,51 +104,71 @@ def is_real_character_name(name: str) -> bool:
     return True
 
 
+def extract_text(file_bytes, filename):
+    """Universal text extractor for supported script formats."""
+    ext = filename.lower().split('.')[-1]
+    
+    if ext == 'pdf':
+        return extract_text_from_pdf(file_bytes)
+    elif ext == 'fdx':
+        return extract_text_from_fdx(file_bytes)
+    elif ext == 'docx':
+        return extract_text_from_docx(file_bytes)
+    elif ext in ('fountain', 'txt'):
+        return file_bytes.decode('utf-8', errors='ignore')
+    else:
+        raise ValueError(f"Unsupported format: {ext}")
+
 def extract_text_from_pdf(file_bytes: bytes) -> str:
-    """
-    Extract text from PDF using multiple strategies.
-    Tries standard text, then rawdict (better for custom-encoded Indian fonts),
-    then falls back to blocks mode. Returns the most readable result.
-    """
+    """Extract text from PDF using multiple strategies for high-fidelity Results."""
     import fitz
     doc = fitz.open(stream=file_bytes, filetype="pdf")
 
-    def try_standard():
+    def _try_standard():
         pages = []
         for page in doc:
             pages.append(page.get_text("text", sort=True))
         return "\n".join(pages)
 
-    def try_blocks():
+    def _try_blocks():
         pages = []
         for page in doc:
             blocks = page.get_text("blocks", sort=True)
             page_lines = []
             for b in blocks:
-                if b[6] == 0:  # text block
-                    page_lines.append(b[4])
+                if b[6] == 0: page_lines.append(b[4])
             pages.append('\n'.join(page_lines))
         return "\n".join(pages)
 
-    results = [try_standard(), try_blocks()]
+    results = [_try_standard(), _try_blocks()]
 
-    # Pick the result with the lowest garbled ratio (most readable)
     def score(text):
         lines = [l for l in text.split('\n') if l.strip()]
-        if not lines:
-            return 1.0
+        if not lines: return 1.0
         ratios = [_ratio_garbled(l) for l in lines]
         return sum(ratios) / len(ratios)
 
     best = min(results, key=score)
-    logger.info(f"PDF extraction: chose strategy with garbled ratio {score(best):.2f}")
-
-    # Sanitize lines: filter/clean garbled encoding
-    clean_lines = []
-    for line in best.split('\n'):
-        cleaned = sanitize_line(line)
-        clean_lines.append(cleaned)
+    clean_lines = [sanitize_line(line) for line in best.split('\n')]
     return '\n'.join(clean_lines)
+
+def extract_text_from_docx(file_bytes):
+    """Extracts text from MS Word .docx files."""
+    from io import BytesIO
+    doc = docx.Document(BytesIO(file_bytes))
+    return "\n".join([p.text for p in doc.paragraphs])
+
+def extract_text_from_fdx(file_bytes):
+    """Extracts text from Final Draft .fdx (XML) files."""
+    from io import BytesIO
+    tree = ET.parse(BytesIO(file_bytes))
+    root = tree.getroot()
+    paragraphs = []
+    # FDX stores body text in Content/Paragraph/Text elements
+    for p in root.findall(".//Paragraph/Text"):
+        if p.text:
+            paragraphs.append(p.text)
+    return "\n".join(paragraphs)
 
 
 
@@ -255,6 +275,44 @@ def _make_scene_skeleton(num: int, heading: str, raw_line: str) -> Dict[str, Any
         "stunts": False,
         "vfx": False,
         "environment": [],
+        "production_crafts": {
+            "pre_production": {},
+            "production_on_set": {},
+            "post_production": {}
+        },
+        "hollywood_breakdown": {
+            "cast": [],
+            "extras": [],
+            "stand_ins": [],
+            "stunts": [],
+            "props": [],
+            "set_dressing": [],
+            "special_props": [],
+            "wardrobe": [],
+            "makeup": [],
+            "hair": [],
+            "vehicles": [],
+            "animals": [],
+            "special_effects_sfx": [],
+            "visual_effects_vfx": [],
+            "sound_effects": [],
+            "music_cues": [],
+            "camera_equipment": [],
+            "lighting_equipment": [],
+            "grip_equipment": [],
+            "special_equipment": [],
+            "location_requirements": [],
+            "set_construction": [],
+            "set_decoration": [],
+            "weather_environment": [],
+            "security_requirements": [],
+            "crowd_control": [],
+            "permits_legal": [],
+            "safety_requirements": [],
+            "child_actors": [],
+            "prosthetics": [],
+            "pyrotechnics": []
+        },
         "raw_text": raw_line + "\n"
     }
 
@@ -447,29 +505,54 @@ Return ONLY a valid JSON array. No markdown, no explanations before/after.
     "scene_number": <integer matching input>,
     "location": "place name in English",
     "time_of_day": "DAY or NIGHT or MORNING or EVENING etc",
-    "characters": ["Character Name 1", "Character Name 2"],
-    "extras": ["Shopkeeper", "Street Vendor", "Police Officer"],
-    "props": ["prop1", "prop2"],
-    "vehicles": [],
-    "animals": [],
-    "wardrobe": "brief costume note per character",
-    "stunts": false,
-    "vfx": false,
-    "tone": "emotional tone in English",
-    "environment": ["Weather/conditions e.g. Sunny, Crowded, Noisy"],
+    "tone": "identify one: Dramatic, Comedic, Romantic, Action, Thriller, Emotional, Horror, Sci-Fi",
+    "genre": "overall script genre: e.g. Masala, Drama, Thriller, Comedy",
+    "hollywood_breakdown": {{
+        "cast": ["list"],
+        "extras": ["list description and count"],
+        "stand_ins": ["list"],
+        "stunts": ["detailed action description"],
+        "props": ["list all physical objects"],
+        "set_dressing": ["list furniture, wall art, etc"],
+        "special_props": ["list"],
+        "wardrobe": ["detailed costume requirements"],
+        "makeup": ["list specific needs"],
+        "hair": ["list specific styles/needs"],
+        "vehicles": ["list cars, bikes, etc"],
+        "animals": ["list"],
+        "special_effects_sfx": ["smoke, rain, explosions"],
+        "visual_effects_vfx": ["green screen, digital replacements"],
+        "sound_effects": ["specific foley or ambiences"],
+        "music_cues": ["score mood or specific songs"],
+        "camera_equipment": ["lenses, drones, gimbals"],
+        "lighting_equipment": ["gels, specific rigs"],
+        "grip_equipment": ["dollies, cranes"],
+        "special_equipment": ["list"],
+        "location_requirements": ["permits, power, accessibility"],
+        "set_construction": ["build needs"],
+        "set_decoration": ["specific item list"],
+        "weather_environment": ["sunny, rainy, foggy requirements"],
+        "security_requirements": ["crowd control, high-profile cast"],
+        "crowd_control": ["barriers, marshals"],
+        "permits_legal": ["city, police, or local permits"],
+        "safety_requirements": ["fire, water, action safety"],
+        "child_actors": ["list needs for children"],
+        "prosthetics": ["list special makeup"],
+        "pyrotechnics": ["list fire/explosive needs"]
+    }},
     "bts_requirements": {{
-      "actors_required": <int: number of named characters>,
-      "extras_required": <int: estimate based on location type — DO NOT return 0 for public scenes>,
-      "props_department": ["every prop needed on set"],
-      "location_requirements": "specific logistical need e.g. 'Public road — obtain municipality permit'",
-      "lighting_requirements": "lighting setup description",
-      "sound_requirements": "sound recording approach",
-      "camera_suggestions": "shot style and key shots",
-      "safety_concerns": ["any risks or special requirements"]
+      "actors_required": <int>,
+      "extras_required": <int>,
+      "props_department": ["list"],
+      "location_requirements": "string",
+      "lighting_requirements": "string",
+      "sound_requirements": "string",
+      "camera_suggestions": "string",
+      "safety_concerns": ["list"]
     }},
     "shooting_type": "PUBLIC LOCATION or INTERIOR or EXTERIOR or STUDIO / PRIVATE",
-    "location_permit": true or false,
-    "summary": "2-3 clear sentences in English describing what happens in this scene, who is present, and what is notable from a production standpoint. Do NOT include garbled text."
+    "location_permit": true,
+    "summary": "Detailed production-focused summary."
   }}
 ]
 
@@ -617,6 +700,39 @@ def fallback_enrich_scene(scene: Dict) -> Dict:
     ]
     scene['summary'] = " ".join(summary_parts)
 
+    # ── 24 Crafts Fallback ──
+    village_vibe = any(kw in (heading + " " + location_detail).lower() for kw in ["village", "forest", "field", "farm", "temple", "river", "mountain"])
+    costume_note = "Traditional/Folk attire suggested for rural setting" if village_vibe else "Modern urban wardrobe"
+    art_note = "Local rural set design and props" if village_vibe else "Standard contemporary set design"
+
+    scene['production_crafts'] = {
+        "pre_production": {
+            "direction": "Focus on standard character introduction and scene blocking",
+            "script_writing": "Review dialogue for pacing and clarity",
+            "casting": f"Named characters: {char_list or 'N/A'}"
+        },
+        "production_on_set": {
+            "acting_junior_artists": f"{shoot_info['extras_estimate']} extras needed for background",
+            "cinematography": "Standard 3-point lighting and 2-camera setup suggested",
+            "technical_unit": "Standard grip and tripod setup",
+            "outdoor_lightmen": "Basic fill lights and reflectors",
+            "stunt_direction": "No major stunts identified in fallback scan" if not scene.get('stunts') else "Standard safety rigging needed",
+            "choreography": "Normal character movement",
+            "art_direction": art_note,
+            "makeup": "Basic touch-ups; character-appropriate makeup",
+            "costume_designing": costume_note,
+            "production_assistance": "Base camp management and hospitality",
+            "production_executive": "Standard daily permit and budget tracking",
+            "cinema_drivers": "Unit transport and cast shuttle"
+        },
+        "post_production": {
+            "editing": "Linear narrative pacing",
+            "audiography_sound": "Sync sound recording and atmosphere tracks",
+            "music": f"{'Rural/Folk' if village_vibe else 'Contemporary'} background score",
+            "dubbing_artist": "Named character vocal matching"
+        }
+    }
+
     # ── BTS ──
     is_night = 'NIGHT' in tod or 'MIDNIGHT' in tod
     extras = shoot_info['extras_estimate']
@@ -652,7 +768,7 @@ def fallback_enrich_scene(scene: Dict) -> Dict:
 def enhance_scenes_with_llm(scenes: List[Dict], router) -> Tuple[List[Dict], str]:
     """Parallel LLM Enhancement Engine with fallback."""
     from concurrent.futures import ThreadPoolExecutor
-    BATCH_SIZE = 5
+    BATCH_SIZE = 3
     batches = [scenes[i:i + BATCH_SIZE] for i in range(0, len(scenes), BATCH_SIZE)]
     agent_used_tracker = []
 
@@ -688,6 +804,7 @@ def enhance_scenes_with_llm(scenes: List[Dict], router) -> Tuple[List[Dict], str
                             scene['location_detail'] = str(info.get('location', scene.get('location', '')))
                             scene['time_of_day'] = str(info.get('time_of_day', scene['time_of_day']))
                             scene['tone'] = str(info.get('tone', "Neutral"))
+                            scene['genre'] = str(info.get('genre', "Drama"))
                             scene['characters'] = sanitize_list(info.get('characters') or scene['characters'])
                             scene['character_count'] = len(scene['characters'])
                             scene['extras'] = sanitize_list(info.get('extras', []))
@@ -698,6 +815,30 @@ def enhance_scenes_with_llm(scenes: List[Dict], router) -> Tuple[List[Dict], str
                             scene['stunts'] = bool(info.get('stunts', False))
                             scene['vfx'] = bool(info.get('vfx', False))
                             scene['environment'] = sanitize_list(info.get('environment', []))
+                            scene['production_crafts'] = info.get('production_crafts', {
+                                "pre_production": {},
+                                "production_on_set": {},
+                                "post_production": {}
+                            })
+                            scene['hollywood_breakdown'] = info.get('hollywood_breakdown', {})
+                            
+                            # Update legacy fields from new breakdown mapping if missing
+                            hb = scene['hollywood_breakdown']
+                            if hb:
+                                if not scene['characters'] and hb.get('cast'):
+                                    scene['characters'] = sanitize_list(hb.get('cast'))
+                                if not scene['props'] and hb.get('props'):
+                                    scene['props'] = sanitize_list(hb.get('props'))
+                                if not scene['extras'] and hb.get('extras'):
+                                    scene['extras'] = sanitize_list(hb.get('extras'))
+                                if not scene['vehicles'] and hb.get('vehicles'):
+                                    scene['vehicles'] = sanitize_list(hb.get('vehicles'))
+                                if not scene['animals'] and hb.get('animals'):
+                                    scene['animals'] = sanitize_list(hb.get('animals'))
+                                if hb.get('visual_effects_vfx'):
+                                    scene['vfx'] = True
+                                if hb.get('stunts'):
+                                    scene['stunts'] = True
 
                             # shooting_type / location_permit — from LLM or auto-detected
                             shoot_info = detect_shooting_type(scene.get('heading', ''), scene['location_detail'])
@@ -757,10 +898,14 @@ def enhance_scenes_with_llm(scenes: List[Dict], router) -> Tuple[List[Dict], str
 # Main Entry Point
 # #########################################
 
-def analyze_script(file_bytes: bytes, router) -> Dict[str, Any]:
-    """Full pipeline: PDF to Results."""
-    logger.info("Step 1: Extracting text from PDF...")
-    full_text = extract_text_from_pdf(file_bytes)
+def analyze_script(file_bytes: bytes, router, filename="script.pdf") -> Dict[str, Any]:
+    """Full pipeline: Universal File Format to Production Results."""
+    logger.info(f"Step 1: Extracting text from {filename}...")
+    try:
+        full_text = extract_text(file_bytes, filename)
+    except Exception as e:
+        logger.error(f"Text extraction failed: {e}")
+        return {"error": f"Failed to extract text: {str(e)}"}
 
     logger.info("Step 2: Splitting into scenes...")
     scenes = split_into_scenes(full_text, router=router)
@@ -829,23 +974,30 @@ def analyze_script(file_bytes: bytes, router) -> Dict[str, Any]:
 
     all_characters = set()
     locations = set()
-    day_count, night_count = 0, 0
-    total_props, total_vehicles, total_animals = 0, 0, 0
+    total_props, total_vehicles, total_extras = 0, 0, 0
     stunt_scenes, vfx_scenes = 0, 0
 
+    # Production Analytics Aggregator
     for s in enhanced_scenes:
+        hb = s.get('hollywood_breakdown', {})
+        
+        # Heritage stats
         for c in s.get('characters', []): all_characters.add(str(c))
         locations.add(str(s.get('location_detail', s.get('location', 'Unknown'))))
-
-        tod = str(s.get('time_of_day', '')).upper()
-        if 'NIGHT' in tod or 'MIDNIGHT' in tod: night_count += 1
-        else: day_count += 1
-
-        total_props += len(s.get('props', []))
-        total_vehicles += len(s.get('vehicles', []))
-        total_animals += len(s.get('animals', []))
-        if s.get('stunts'): stunt_scenes += 1
-        if s.get('vfx'): vfx_scenes += 1
+        
+        # Context-aware Hollywood Breakdown Stats
+        if hb:
+            total_props += len(hb.get('props', []))
+            total_vehicles += len(hb.get('vehicles', []))
+            if hb.get('stunts'): stunt_scenes += 1
+            if hb.get('visual_effects_vfx'): vfx_scenes += 1
+            
+            # Estimate extras from list or count
+            extras_list = hb.get('extras', [])
+            for e in extras_list:
+                count_match = re.search(r'(\d+)', str(e))
+                total_extras += int(count_match.group(1)) if count_match else 1
+        
         s.pop('raw_text', None)
 
     return {
@@ -855,12 +1007,32 @@ def analyze_script(file_bytes: bytes, router) -> Dict[str, Any]:
             "total_scenes": len(enhanced_scenes),
             "total_characters": len(all_characters),
             "locations": len(locations),
-            "day_scenes": day_count,
-            "night_scenes": night_count,
             "props_count": total_props,
             "vehicles": total_vehicles,
-            "animals": total_animals,
-            "stunts": stunt_scenes,
-            "vfx_scenes": vfx_scenes
-        }
+            "stunt_scenes": stunt_scenes,
+            "vfx_scenes": vfx_scenes,
+            "extras_required_total": total_extras
+        },
+        "department_sheets": generate_department_sheets(enhanced_scenes)
     }
+
+def generate_department_sheets(scenes):
+    """Groups requirements by production department for professional Line Producer workflow."""
+    sheets = {
+        "PROPS": [], "WARDROBE": [], "STUNTS": [], 
+        "MAKEUP": [], "VFX": [], "LOCATION": []
+    }
+    for s in scenes:
+        hb = s.get('hollywood_breakdown', {})
+        sn = s['scene_number']
+        loc = s.get('location_detail', 'Unknown')
+        header = f"Scene {sn} - {loc}"
+        
+        if hb.get('props'): sheets["PROPS"].append({"header": header, "items": hb['props']})
+        if hb.get('wardrobe'): sheets["WARDROBE"].append({"header": header, "items": hb['wardrobe']})
+        if hb.get('stunts'): sheets["STUNTS"].append({"header": header, "details": hb['stunts']})
+        if hb.get('makeup'): sheets["MAKEUP"].append({"header": header, "items": hb['makeup']})
+        if hb.get('visual_effects_vfx'): sheets["VFX"].append({"header": header, "details": hb['visual_effects_vfx']})
+        if hb.get('location_requirements'): sheets["LOCATION"].append({"header": header, "reqs": hb['location_requirements']})
+            
+    return sheets

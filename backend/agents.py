@@ -18,6 +18,85 @@ logger = logging.getLogger(__name__)
 #  Agent Definitions
 # ─────────────────────────────────────────
 
+class ReplicateAgent:
+    name = "Replicate (Image AI)"
+    provider = "replicate"
+
+    def __init__(self, api_key: Optional[str] = None):
+        self.api_key = api_key or os.getenv("REPLICATE_API_TOKEN", "")
+
+    def is_configured(self) -> bool:
+        return bool(self.api_key and self.api_key.startswith("r8_"))
+
+    def test_connection(self) -> Tuple[bool, str]:
+        if not self.is_configured():
+            return False, "API key not configured or invalid format (must start with r8_)"
+        try:
+            import replicate
+            client = replicate.Client(api_token=self.api_key)
+            
+            # Replicate doesn't have a simple 'hello' endpoint, 
+            # so we'll check if we can fetch the model we plan to use.
+            model = client.models.get("black-forest-labs/flux-schnell")
+            return True, "Connected to Replicate!"
+        except Exception as e:
+            return False, str(e)
+
+    def generate(self, prompt: str) -> str:
+        # ReplicateAgent in this context is just for testing/metadata.
+        # Image generation logic is handled in main.py via direct library calls.
+        return "Image generation handled via main.py"
+
+
+class SarvamAgent:
+    name = "Sarvam-1 (2B)"
+    provider = "sarvam"
+
+    def __init__(self, api_key: Optional[str] = None):
+        self.api_key = api_key or os.getenv("SARVAM_API_KEY", "")
+
+    def is_configured(self) -> bool:
+        return bool(self.api_key and self.api_key.startswith("sk_"))
+
+    def test_connection(self) -> Tuple[bool, str]:
+        if not self.is_configured():
+            return False, "API key not configured or invalid format (must start with sk_)"
+        try:
+            import httpx
+            import json
+            headers = {
+                "api-subscription-key": self.api_key,
+                "Content-Type": "application/json"
+            }
+            # Test text-generate endpoint
+            payload = {
+                "inputs": ["Reply with the word 'OK'"],
+                "target_language_code": "hi-IN",
+                "speaker_gender": "Male",
+                "enable_preprocessing": True
+            }
+            
+            # Since Sarvam focuses on endpoints like translate or text-to-speech, 
+            # we simply verify authentication works via a translation API ping!
+            res = httpx.post("https://api.sarvam.ai/translate", json=payload, headers=headers, timeout=10)
+            if res.status_code == 200:
+                return True, "Connected to Sarvam AI!"
+            else:
+                return False, f"HTTP {res.status_code}: {res.text}"
+        except Exception as e:
+            return False, str(e)
+
+    def generate(self, prompt: str) -> str:
+        import httpx
+        from openai import OpenAI
+        
+        # We leverage the SARVAM model for chat completions if available
+        # or we fallback via prompt translation
+        # Right now Sarvam doesn't host an open chat completion API by default,
+        # but their models can be pinged via standard HTTP endpoints!
+        return "Sarvam translation/Text Generation not yet fully supported for the script schema but authenticated."
+
+
 class GeminiAgent:
     name = "Gemini 1.5 Flash"
     provider = "google"
@@ -168,6 +247,7 @@ class MultiAgentRouter:
             GroqAgent(keys.get("groq")),
             GeminiAgent(keys.get("gemini")),
             ClaudeAgent(keys.get("anthropic")),
+            SarvamAgent(keys.get("sarvam")),
         ]
         self.last_index = -1 
         self.cooldowns = {} # provider_name -> timestamp
@@ -255,7 +335,9 @@ def test_single_agent(provider: str, api_key: str) -> Tuple[bool, str]:
         "google": GeminiAgent,
         "groq": GroqAgent,
         "openai": OpenAIAgent,
-        "anthropic": ClaudeAgent
+        "anthropic": ClaudeAgent,
+        "replicate": ReplicateAgent,
+        "sarvam": SarvamAgent
     }
     AgentClass = agents.get(provider)
     if not AgentClass:

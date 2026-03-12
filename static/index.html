@@ -21,37 +21,70 @@
     <header class="header">
         <div class="container header-inner">
             <div class="logo">
-                <div class="logo-icon">🎬</div>
+                <div class="logo-icon ripple-glow">SL</div>
                 <div>
                     <div class="logo-text gradient-text">ScriptLens</div>
-                    <div class="logo-sub">AI Screenplay Analyzer</div>
+                    <div class="logo-sub">Production Intelligence v2.0</div>
                 </div>
             </div>
-            <div class="header-status">
+            <div class="header-status glass-chip">
                 <div class="status-dot" id="api-status-dot"></div>
-                <span id="api-status-text">Not configured</span>
+                <span id="api-status-text">Synchronizing Agents...</span>
             </div>
         </div>
     </header>
 
-    <!-- ═══════════ HERO ═══════════ -->
-    <section class="hero">
+    <!-- ═══════════ CINEMATIC HERO ═══════════ -->
+    <section class="hero-redesign">
         <div class="container">
-            <div class="hero-badge">
-                <span>🤖</span>
-                Multi-Agent AI · Gemini · Groq · OpenAI
-            </div>
-            <h1>
-                Decode Every Scene<br />
-                <span class="gradient-text">of Your Screenplay</span>
-            </h1>
-            <p>Upload your movie script PDF and instantly extract every scene's location, time of day, characters, and a
-                concise summary — powered by a failsafe multi-model AI pipeline.</p>
-            <div class="hero-features">
-                <div class="hero-feat"><span>🌙</span><span>Day / Night Detection</span></div>
-                <div class="hero-feat"><span>📍</span><span>Location Extraction</span></div>
-                <div class="hero-feat"><span>👥</span><span>Character Mapping</span></div>
-                <div class="hero-feat"><span>🔄</span><span>Auto Model Fallback</span></div>
+            <div class="hero-content">
+                <h1 class="main-title">
+                    From Script <br />
+                    <span class="highlight">To Screen Breakdown</span>
+                </h1>
+                <p class="hero-desc">The industry-standard AI engine for production-precise scene analysis and script
+                    parsing.</p>
+
+                <!-- 10-Stage Processing Timeline (Hidden by default) -->
+                <div id="progress-section" class="progress-container">
+                    <div class="processing-header">
+                        <span class="shimmer-text">Processing Engine Active</span>
+                        <div id="progress-pct" class="progress-sub">0%</div>
+                    </div>
+                    <div class="workflow-stepper" id="workflow-stepper">
+                        <!-- Steps will be injected or activated here -->
+                        <div class="step-item" id="step-1">
+                            <div class="step-dot"></div><span>Upload Script</span>
+                        </div>
+                        <div class="step-item" id="step-2">
+                            <div class="step-dot"></div><span>Process Document</span>
+                        </div>
+                        <div class="step-item" id="step-3">
+                            <div class="step-dot"></div><span>Detect Scene Boundaries</span>
+                        </div>
+                        <div class="step-item" id="step-4">
+                            <div class="step-dot"></div><span>Parse Action Beats</span>
+                        </div>
+                        <div class="step-item" id="step-5">
+                            <div class="step-dot"></div><span>Entity Extraction</span>
+                        </div>
+                        <div class="step-item" id="step-6">
+                            <div class="step-dot"></div><span>Detect 24 Crafts</span>
+                        </div>
+                        <div class="step-item" id="step-7">
+                            <div class="step-dot"></div><span>LLM Reasoning</span>
+                        </div>
+                        <div class="step-item" id="step-8">
+                            <div class="step-dot"></div><span>Build Database</span>
+                        </div>
+                        <div class="step-item" id="step-9">
+                            <div class="step-dot"></div><span>Plan Production</span>
+                        </div>
+                        <div class="step-item" id="step-10">
+                            <div class="step-dot"></div><span>Render Dashboard</span>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </section>
@@ -149,7 +182,46 @@
                         <div class="key-status" id="openai-status"></div>
                     </div>
 
+                    <!-- Replicate -->
+                    <div class="api-provider" style="margin-top: 12px;">
+                        <div class="provider-header">
+                            <div class="provider-name">
+                                <span>🎨</span> Replicate (Image AI)
+                            </div>
+                            <span class="provider-badge badge-optional">Visuals Only</span>
+                        </div>
+                        <div class="api-input-row">
+                            <input type="password" class="api-input" id="replicate-key" placeholder="r8_..."
+                                autocomplete="off" spellcheck="false" />
+                            <button class="test-btn" id="test-replicate"
+                                onclick="testKey('replicate', 'replicate-key', 'replicate-status')">
+                                Test
+                            </button>
+                        </div>
+                        <div class="key-status" id="replicate-status"></div>
+                    </div>
+
+                    <!-- Sarvam AI -->
+                    <div class="api-provider" style="margin-top: 12px;">
+                        <div class="provider-header">
+                            <div class="provider-name">
+                                <span>🇮🇳</span> Sarvam AI
+                            </div>
+                            <span class="provider-badge">Text Only</span>
+                        </div>
+                        <div class="api-input-row">
+                            <input type="password" class="api-input" id="sarvam-key" placeholder="sk_..."
+                                autocomplete="off" spellcheck="false" />
+                            <button class="test-btn" id="test-sarvam"
+                                onclick="testKey('sarvam', 'sarvam-key', 'sarvam-status')">
+                                Test
+                            </button>
+                        </div>
+                        <div class="key-status" id="sarvam-status"></div>
+                    </div>
+
                     <button class="save-keys-btn" style="margin-top: 20px;" onclick="saveKeys()">
+
                         💾 Save & Activate Keys
                     </button>
                 </div>
@@ -183,6 +255,16 @@
                             <div class="agent-dot inactive" id="dot-openai"></div>
                             <div class="agent-name">OpenAI GPT-4o-mini</div>
                             <div class="agent-priority">4th</div>
+                        </div>
+                        <div class="agent-item">
+                            <div class="agent-dot inactive" id="dot-replicate"></div>
+                            <div class="agent-name">Replicate (Flux)</div>
+                            <div class="agent-priority">Visuals</div>
+                        </div>
+                        <div class="agent-item">
+                            <div class="agent-dot inactive" id="dot-sarvam"></div>
+                            <div class="agent-name">Sarvam-1 (2B)</div>
+                            <div class="agent-priority">Fallback</div>
                         </div>
                     </div>
                     <button class="test-btn" style="width:100%; margin-top:14px; padding:10px;"
@@ -278,8 +360,63 @@
                     <!-- Results (hidden until analysis done) -->
                     <div id="results-content" style="display:none;">
 
-                        <!-- Stats -->
-                        <div class="stats-grid" id="stats-grid"></div>
+                        <!-- 8-Metric Overview Bar -->
+                        <div class="metrics-grid">
+                            <div class="metric-card">
+                                <div class="metric-val" id="stat-scenes">-</div>
+                                <div class="metric-label">Total Scenes</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-val" id="stat-cast">-</div>
+                                <div class="metric-label">Characters</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-val" id="stat-locations">-</div>
+                                <div class="metric-label">Locations</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-val" id="stat-props">-</div>
+                                <div class="metric-label">Props</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-val" id="stat-vehicles">-</div>
+                                <div class="metric-label">Vehicles</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-val" id="stat-stunts">-</div>
+                                <div class="metric-label">Stunts</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-val" id="stat-vfx">-</div>
+                                <div class="metric-label">VFX</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-val" id="stat-extras">-</div>
+                                <div class="metric-label">Extras</div>
+                            </div>
+                        </div>
+
+                        <!-- Department Sheets Section -->
+                        <div class="dept-hub card" style="margin-bottom: 30px;">
+                            <div class="card-header">
+                                <div class="card-icon gold">📋</div>
+                                <div>
+                                    <div class="card-title">Production Department Hub</div>
+                                    <div class="card-subtitle">Assistant Director & Line Producer Sheets</div>
+                                </div>
+                            </div>
+                            <div class="dept-tabs">
+                                <button class="dept-tab active" onclick="switchDept('PROPS')">Props</button>
+                                <button class="dept-tab" onclick="switchDept('WARDROBE')">Wardrobe</button>
+                                <button class="dept-tab" onclick="switchDept('STUNTS')">Stunts</button>
+                                <button class="dept-tab" onclick="switchDept('LOCATION')">Location</button>
+                                <button class="dept-tab" onclick="switchDept('MAKEUP')">Makeup</button>
+                            </div>
+                            <div id="dept-sheet-content" class="dept-sheet-results">
+                                <div style="text-align:center; padding: 40px; color: var(--text-muted);">Select a
+                                    department to view the breakdown.</div>
+                            </div>
+                        </div>
 
                         <!-- Agent Info -->
                         <div
@@ -289,6 +426,8 @@
                                 <div class="agent-used-badge" id="agent-used-badge">
                                     🤖 <span id="agent-used-name">—</span>
                                 </div>
+                                <button class="gen-all-btn" id="gen-all-images-btn" onclick="generateAllImages()">🎬
+                                    Generate All Scene Visuals</button>
                                 <button class="export-btn" onclick="exportJSON()">⬇ Export JSON</button>
                                 <button class="export-btn" onclick="exportCSV()"
                                     style="background:rgba(155,89,245,0.1);border-color:rgba(155,89,245,0.25);color:var(--accent-purple);">⬇

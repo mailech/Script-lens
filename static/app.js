@@ -7,6 +7,7 @@ const API_BASE = '';  // Same origin (FastAPI serves this)
 let selectedFile = null;
 let analysisData = null;
 let allScenes = [];
+const sceneImageCache = {}; // scene_number -> 'loading' | 'done' | 'error'
 
 // ─────────────────────────────────────────
 //  INIT
@@ -84,7 +85,7 @@ function setStatus(el, type, msg) {
 }
 
 function getProviderName(p) {
-    return { google: 'Gemini', groq: 'Groq', openai: 'OpenAI', anthropic: 'Claude' }[p] || p;
+    return { google: 'Gemini', groq: 'Groq', openai: 'OpenAI', anthropic: 'Claude', replicate: 'Replicate', sarvam: 'Sarvam AI' }[p] || p;
 }
 
 
@@ -98,9 +99,11 @@ async function saveKeys() {
         groq: document.getElementById('groq-key').value.trim() || undefined,
         openai: document.getElementById('openai-key').value.trim() || undefined,
         anthropic: document.getElementById('claude-key').value.trim() || undefined,
+        replicate: document.getElementById('replicate-key').value.trim() || undefined,
+        sarvam: document.getElementById('sarvam-key').value.trim() || undefined,
     };
 
-    if (!keys.gemini && !keys.groq && !keys.openai && !keys.anthropic) {
+    if (!keys.gemini && !keys.groq && !keys.openai && !keys.anthropic && !keys.replicate && !keys.sarvam) {
         showToast('Please enter at least one API key before saving.', 'error');
         return;
     }
@@ -145,7 +148,7 @@ async function refreshAgentStatus() {
 }
 
 function updateAgentDots(agents) {
-    const dotMap = { google: 'dot-gemini', groq: 'dot-groq', openai: 'dot-openai', anthropic: 'dot-claude' };
+    const dotMap = { google: 'dot-gemini', groq: 'dot-groq', openai: 'dot-openai', anthropic: 'dot-claude', replicate: 'dot-replicate', sarvam: 'dot-sarvam' };
     agents.forEach(agent => {
         const dot = document.getElementById(dotMap[agent.provider]);
         if (dot) {
@@ -239,9 +242,6 @@ async function analyzeScript() {
 
     // Check at least one key is saved
     const btn = document.getElementById('analyze-btn');
-    const progressSection = document.getElementById('progress-section');
-    const progressLabel = document.getElementById('progress-label');
-
     // UI: loading state
     btn.disabled = true;
     document.getElementById('analyze-btn-icon').textContent = '';
@@ -250,24 +250,33 @@ async function analyzeScript() {
     spinner.className = 'spinner';
     spinner.id = 'analyze-spinner';
     btn.prepend(spinner);
+
+    const progressSection = document.getElementById('progress-section');
+    const pctText = document.getElementById('progress-pct');
+    const stepperSteps = ['step-1', 'step-2', 'step-3', 'step-4', 'step-5', 'step-6', 'step-7', 'step-8', 'step-9', 'step-10'];
+
+    // Reset steps
+    stepperSteps.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.className = 'step-item';
+    });
     progressSection.classList.add('visible');
 
-    const steps = [
-        'Extracting text from PDF...',
-        'Detecting scene headings...',
-        'Identifying locations...',
-        'Mapping characters...',
-        'Running multi-agent LLM enhancement...',
-        'Generating scene summaries...',
-        'Finalizing results...'
-    ];
-
-    let stepIdx = 0;
-    const stepInterval = setInterval(() => {
-        if (stepIdx < steps.length) {
-            progressLabel.textContent = steps[stepIdx++];
+    const updateProgress = (stepIdx) => {
+        if (stepIdx >= stepperSteps.length) return;
+        for (let i = 0; i < stepIdx; i++) {
+            const prev = document.getElementById(stepperSteps[i]);
+            if (prev) prev.className = 'step-item completed';
         }
-    }, 3000);
+        const curr = document.getElementById(stepperSteps[stepIdx]);
+        if (curr) curr.className = 'step-item active';
+        pctText.textContent = `${Math.round(((stepIdx + 1) / stepperSteps.length) * 100)}%`;
+    };
+
+    let simulatedIdx = 0;
+    const progressInterval = setInterval(() => {
+        if (simulatedIdx < 9) updateProgress(simulatedIdx++);
+    }, 2800);
 
     const formData = new FormData();
     formData.append('file', selectedFile);
@@ -278,7 +287,8 @@ async function analyzeScript() {
             body: formData
         });
 
-        clearInterval(stepInterval);
+        clearInterval(progressInterval);
+        updateProgress(9);
 
         if (!res.ok) {
             const errData = await res.json().catch(() => ({ detail: res.statusText }));
@@ -289,14 +299,38 @@ async function analyzeScript() {
         analysisData = data;
         allScenes = data.scenes || [];
 
+        // 1. Render Dashboard Metrics
+        const stats = data.stats || {};
+        document.getElementById('stat-scenes').textContent = stats.total_scenes || allScenes.length;
+        document.getElementById('stat-cast').textContent = stats.total_characters || 0;
+        document.getElementById('stat-locations').textContent = stats.locations || 0;
+        document.getElementById('stat-props').textContent = stats.props_count || 0;
+        document.getElementById('stat-vehicles').textContent = stats.vehicles || 0;
+        document.getElementById('stat-stunts').textContent = stats.stunt_scenes || 0;
+        document.getElementById('stat-vfx').textContent = stats.vfx_scenes || 0;
+        document.getElementById('stat-extras').textContent = stats.extras_required_total || 0;
+
+        // 2. Clear and Render Results
+        document.getElementById('results-content').style.display = 'block';
+        document.getElementById('placeholder-state').style.display = 'none';
+        document.getElementById('agent-used-name').textContent = data.agent_used || 'Hybrid Parser';
+
         renderResults(data);
+
+        // 3. Initialize Dept Hub
+        switchDept('PROPS');
+
         showToast(`✨ Analysis complete! ${allScenes.length} scenes found.`, 'success', 5000);
-        progressLabel.textContent = `✓ Analysis complete — ${allScenes.length} scenes detected`;
+
+        setTimeout(() => {
+            progressSection.classList.remove('visible');
+            document.getElementById('results-dashboard')?.scrollIntoView({ behavior: 'smooth' });
+        }, 2000);
 
     } catch (err) {
-        clearInterval(stepInterval);
+        clearInterval(progressInterval);
         showToast(`Analysis failed: ${err.message}`, 'error', 6000);
-        progressLabel.textContent = `✗ Failed: ${err.message}`;
+        console.error('Analysis failed:', err);
     } finally {
         btn.disabled = false;
         document.getElementById('analyze-btn-icon').textContent = '🎬';
@@ -327,41 +361,26 @@ function renderResults(data) {
 }
 
 function renderStats(stats) {
-    const grid = document.getElementById('stats-grid');
-    grid.innerHTML = `
-    <div class="stat-card gold">
-      <div class="stat-value">${stats.total_scenes || 0}</div>
-      <div class="stat-label">Total Scenes</div>
-    </div>
-    <div class="stat-card blue">
-      <div class="stat-value">${stats.total_characters || 0}</div>
-      <div class="stat-label">Characters</div>
-    </div>
-    <div class="stat-card green">
-      <div class="stat-value">${stats.locations || stats.unique_locations || 0}</div>
-      <div class="stat-label">Locations</div>
-    </div>
-    <div class="stat-card gold" style="border-bottom: 3px solid var(--accent);">
-      <div class="stat-value">${stats.props_count || 0}</div>
-      <div class="stat-label">Props</div>
-    </div>
-    <div class="stat-card" style="border-bottom: 3px solid #ffa500;">
-      <div class="stat-value">${stats.vehicles || 0}</div>
-      <div class="stat-label">Vehicles</div>
-    </div>
-    <div class="stat-card" style="border-bottom: 3px solid #22c55e;">
-      <div class="stat-value">${stats.animals || 0}</div>
-      <div class="stat-label">Animals</div>
-    </div>
-    <div class="stat-card" style="border-bottom: 3px solid #ef4444;">
-      <div class="stat-value">${stats.stunts || 0}</div>
-      <div class="stat-label">Stunt Scenes</div>
-    </div>
-    <div class="stat-card" style="border-bottom: 3px solid #3b82f6;">
-      <div class="stat-value">${stats.vfx_scenes || 0}</div>
-      <div class="stat-label">VFX Shots</div>
-    </div>
-  `;
+    const ids = {
+        'stat-scenes': stats.total_scenes || allScenes.length || 0,
+        'stat-cast': stats.total_characters || 0,
+        'stat-locations': stats.locations || stats.unique_locations || 0,
+        'stat-props': stats.props_count || 0,
+        'stat-vehicles': stats.vehicles || 0,
+        'stat-stunts': stats.stunt_scenes || 0,
+        'stat-vfx': stats.vfx_scenes || 0,
+        'stat-extras': stats.extras_required_total || 0
+    };
+
+    for (const [id, val] of Object.entries(ids)) {
+        const el = document.getElementById(id);
+        if (el) {
+            el.textContent = val;
+            // Add pulse effect on update
+            el.classList.add('pulse');
+            setTimeout(() => el.classList.remove('pulse'), 500);
+        }
+    }
 }
 
 function renderSceneList(scenes) {
@@ -382,103 +401,67 @@ function buildSceneCard(scene) {
     const tod = (s.time_of_day || '').toUpperCase();
     const intExt = (s.int_ext || '').replace('-', '/');
     const todTag = getTimeTag(tod);
-
     const chars = s.characters || [];
+    const location = s.location_detail || s.location || '—';
+    const bts = s.bts_requirements || {};
 
-    // Client-side garbled text detector (defense-in-depth)
+    // Client-side garbled text detector
     function isGarbled(str) {
+        if (!str) return false;
         const alpha = [...str].filter(c => /[a-zA-Z\u00C0-\u024F]/.test(c));
         if (!alpha.length) return false;
-        const garbled = alpha.filter(c => c.charCodeAt(0) >= 0x00C0 && c.charCodeAt(0) <= 0x024F);
-        return garbled.length / alpha.length > 0.35;
+        return alpha.filter(c => c.charCodeAt(0) >= 0x00C0 && c.charCodeAt(0) <= 0x024F).length / alpha.length > 0.35;
     }
 
-    // Non-name words that should NEVER appear as a character chip
-    const NON_NAME_WORDS = new Set([
-        'N/A', 'NA', 'NONE', 'NULL', '-', '—', 'SCENE', 'CUT', 'FADE', 'EXT', 'INT',
-        'DAY', 'NIGHT', 'MORNING', 'EVENING', 'CAMERA', 'COLLEGE', 'STUDENTS', 'PEOPLE',
-        'CROWD', 'CONTINUED', 'TRANSITION', 'LOOKING', 'GOING', 'DISSOLVE'
-    ]);
-
-    // Filter garbled, numeric, timecode, and non-name chars
     const cleanChars = chars.filter(c => {
-        if (!c || !c.trim()) return false;
-        const trimmed = c.trim();
-        // Reject pure numbers or timecodes
+        if (!c || !c.trim() || c.length < 2) return false;
+        const trimmed = c.trim().toUpperCase();
         if (/^[\d\s.:,\-]+$/.test(trimmed)) return false;
-        if (/^\d{2}[.:]\d{2}/.test(trimmed)) return false;
-        // Reject very short strings (single char or number)
-        if (trimmed.length < 2) return false;
-        // Reject boilerplate words
-        if (NON_NAME_WORDS.has(trimmed.toUpperCase())) return false;
-        // Reject garbled text
-        if (isGarbled(trimmed)) return false;
-        return true;
+        const boilerplate = new Set(['N/A', 'NA', 'NONE', 'NULL', 'SCENE', 'CUT', 'FADE', 'INT', 'EXT', 'DAY', 'NIGHT', 'CAMERA', 'COLLEGE']);
+        if (boilerplate.has(trimmed)) return false;
+        return !isGarbled(c);
     });
 
-    // Smart chip renderer: handles non-Latin scripts via Noto fonts
-    function makeCharChip(name) {
-        const isNonLatin = /[^\x00-\x7F]/.test(name) && !isGarbled(name);
-        const fontStyle = isNonLatin
-            ? 'font-family:"Noto Sans Telugu","Noto Sans Devanagari","Noto Sans Tamil","Noto Sans",sans-serif;font-size:12px;'
-            : '';
-        return `<span class="char-chip" style="${fontStyle}" title="${escapeHtml(name)}">${escapeHtml(name)}</span>`;
-    }
+    const charDisplay = cleanChars.map(name => {
+        const isNonLatin = /[^\x00-\x7F]/.test(name);
+        const style = isNonLatin ? 'font-family:"Noto Sans",sans-serif;font-size:12px;' : '';
+        return `<span class="char-chip" style="${style}">${escapeHtml(name)}</span>`;
+    }).join('');
 
-    const charChips = cleanChars.map(makeCharChip).join('');
-    const charDisplay = cleanChars.length > 0 ? charChips : '<span style="color:var(--text-muted);font-size:13px;">Characters extracted by LLM</span>';
+    const summary = isGarbled(s.summary || '')
+        ? (s.summary || '').replace(/[^\x00-\x7F\s.,!?'"()\-:]/g, '')
+        : (s.summary || '');
 
-    // Clean summary text from garbled characters
-    const rawSummary = s.summary || '';
-    const summary = isGarbled(rawSummary)
-        ? rawSummary.replace(/[^\x00-\x7F\u0C00-\u0C7F\u0900-\u097F\u0B80-\u0BFF\s.,!?'"()\-:]/g, '').trim() || `Scene at ${s.location_detail || s.location || 'unknown location'}.`
-        : rawSummary;
-
-    const location = s.location_detail || s.location || '—';
-
-    // Professional Schematic Mapping
-    const bts = s.bts_requirements || {};
-    const formatVal = (v) => {
-        if (Array.isArray(v)) return v.length > 0 ? v.join(', ') : 'None';
-        if (typeof v === 'object' && v !== null) {
-            try { return JSON.stringify(v); } catch (e) { return String(v); }
-        }
-        return v || 'None';
+    // Hollywood Breakdown Mapping
+    const hb = s.hollywood_breakdown || {};
+    const DEPT_MAP = {
+        "Cast": hb.cast, "Extras": hb.extras, "Stunts": hb.stunts,
+        "Props": hb.props, "Wardrobe": hb.wardrobe, "Makeup": hb.makeup,
+        "Vehicles": hb.vehicles, "Animals": hb.animals, "SFX": hb.special_effects_sfx,
+        "VFX": hb.visual_effects_vfx, "Permits": hb.permits_legal, "Safety": hb.safety_requirements
     };
 
-    const props = Array.isArray(s.props) ? s.props : [];
-    const vehicles = Array.isArray(s.vehicles) ? s.vehicles : [];
-    const animals = Array.isArray(s.animals) ? s.animals : [];
-    const env = Array.isArray(s.environment) ? s.environment : [];
+    const renderDepts = Object.entries(DEPT_MAP)
+        .filter(([_, val]) => val && (Array.isArray(val) ? val.length > 0 : !!val))
+        .map(([key, val]) => `
+            <div class="prod-field mt-1" style="display:flex; gap:8px;">
+                <span class="field-label" style="font-size:10px; min-width:65px; color:var(--accent-gold); opacity:0.8;">${key}:</span>
+                <span class="field-val" style="font-size:10px; line-height:1.3;">${Array.isArray(val) ? val.join(', ') : val}</span>
+            </div>
+        `).join('');
 
     return `
     <div class="scene-card" id="scene-card-${s.scene_number}" onclick="toggleScene(${s.scene_number})">
+      <!-- Cinematic Scene Image -->
+      <div class="scene-img-panel" id="scene-img-${s.scene_number}" style="display:none;"></div>
       <div class="scene-header">
         <div class="scene-num">${escapeHtml(s.script_scene_number || s.scene_number)}</div>
         <div class="scene-main">
-          <div class="scene-heading-text" title="${escapeHtml(s.heading || '')}">
-            ${escapeHtml(s.heading)}
-          </div>
+          <div class="scene-heading-text">${escapeHtml(s.heading)}</div>
           <div class="scene-meta">
-            <span class="scene-tag ${todTag}">
-              ${getTimeIcon(tod)} ${tod || '—'}
-            </span>
-            <span class="scene-tag ${intExt.startsWith('INT') ? 'tag-int' : 'tag-ext'}">
-              📍 ${escapeHtml(location)}
-            </span>
-            <span class="scene-tag tag-chars">
-              👥 ${s.character_count || chars.length || 0} chars
-            </span>
-            <span class="scene-tag" style="background:rgba(168,85,247,0.1); color:#a855f7;">
-              🎭 ${escapeHtml(s.tone || 'Neutral Tone')}
-            </span>
-            ${s.location_permit ? `
-            <span class="scene-tag" style="background:rgba(239,68,68,0.15); color:#ef4444; border:1px solid rgba(239,68,68,0.35); font-weight:600;">
-              🚨 PUBLIC LOCATION — PERMIT NEEDED
-            </span>` : (s.shooting_type && s.shooting_type !== 'INTERIOR' ? `
-            <span class="scene-tag" style="background:rgba(16,185,129,0.1); color:#10b981;">
-              🎬 ${escapeHtml(s.shooting_type)}
-            </span>` : '')}
+            <span class="scene-tag ${todTag}">${getTimeIcon(tod)} ${tod || '—'}</span>
+            <span class="scene-tag ${intExt.startsWith('INT') ? 'tag-int' : 'tag-ext'}">📍 ${escapeHtml(location)}</span>
+            ${s.location_permit ? `<span class="scene-tag" style="background:rgba(239,68,68,0.1); color:#ef4444; border:1px solid rgba(239,68,68,0.2);">🚨 PERMIT</span>` : ''}
           </div>
         </div>
         <div class="scene-chevron">▾</div>
@@ -487,102 +470,250 @@ function buildSceneCard(scene) {
         <div class="scene-body-grid">
           <div class="scene-body-section main-info">
             <div class="scene-body-label">Director's Analysis</div>
-            <div class="summary-text">${escapeHtml(summary)}</div>
-            
+            <div class="summary-text">${escapeHtml(summary || 'Analyzing scene context...')}</div>
             <div class="mt-3">
-                <div class="scene-body-label">Characters & Environment</div>
-                <div class="char-chips">${charDisplay}</div>
-                <div class="mt-2">
-                    <span class="field-label">🌍 Environment:</span>
-                    <span class="field-val">${formatVal(env)}</span>
-                </div>
+                <div class="scene-body-label">On-Set Cast</div>
+                <div class="char-chips">${charDisplay || 'Main cast required.'}</div>
             </div>
-
-                <div class="mt-3">
-                    <div class="scene-body-label">Wardrobe &amp; Extra Talent</div>
-                    <div class="prod-field">
-                        <span class="field-label"><i class="fas fa-tshirt"></i> Wardrobe:</span>
-                        <div class="field-val" style="color:#a855f7; font-weight:500;">${escapeHtml(s.wardrobe || 'Standard')}</div>
-                    </div>
-                    <div class="prod-field mt-1">
-                        <span class="field-label"><i class="fas fa-users"></i> Actors Needed:</span>
-                        <div class="field-val">
-                          <strong>${bts.actors_required || chars.length}</strong> named actors
-                          &nbsp;|&nbsp;
-                          <strong style="color:${(bts.extras_required || 0) > 0 ? '#f59e0b' : 'var(--text-muted)'}">
-                            ${bts.extras_required || 0}
-                          </strong> extras
-                        </div>
-                    </div>
-                    ${(s.extras && s.extras.length > 0) ? `
-                    <div class="prod-field mt-1">
-                        <span class="field-label" style="margin-bottom:4px;">🎭 Background Roles:</span>
-                        <div class="char-chips" style="margin-top:4px;">
-                          ${s.extras.map(e => `<span class="char-chip" style="background:rgba(245,158,11,0.15);color:#f59e0b;border-color:rgba(245,158,11,0.3);">${escapeHtml(e)}</span>`).join('')}
-                        </div>
-                    </div>` : ''}
-                </div>
           </div>
-          
           <div class="scene-body-section production-info">
-            <div class="scene-body-label">BTS & Department Logistics</div>
+            <div class="scene-body-label">Hollywood Breakdown</div>
             <div class="prod-breakdown-card">
-                <div class="prod-field">
-                    <span class="field-label"><i class="fas fa-box"></i> Physical Props:</span>
-                    <div class="prop-tags">
-                        ${props.map(p => `<span class="prop-tag">${escapeHtml(p)}</span>`).join('') || '<span class="none">None</span>'}
-                    </div>
-                </div>
-                ${vehicles.length > 0 || animals.length > 0 ? `
-                <div class="prod-field mt-2">
-                    <span class="field-label"><i class="fas fa-car-side"></i> Transport/Animals:</span>
-                    <div class="prop-tags">
-                        ${vehicles.map(v => `<span class="prop-tag" style="background:rgba(255,165,0,0.1); color:#ffa500;">${escapeHtml(v)}</span>`).join('')}
-                        ${animals.map(a => `<span class="prop-tag" style="background:rgba(34,197,94,0.1); color:#22c55e;">🐾 ${escapeHtml(a)}</span>`).join('')}
-                    </div>
-                </div>` : ''}
-                
-                <div class="prod-field mt-3">
-                    <div class="scene-body-label" style="font-size:10px; opacity:0.6; text-transform:uppercase; margin-bottom:5px;">Professional Logistics</div>
+                ${renderDepts || '<div class="none">Standard departmental requirements.</div>'}
+                <div class="mt-2 pt-2 border-top" style="border-color:rgba(255,255,255,0.05) !important;">
                     <div class="prod-logistics-grid">
                         <div class="log-item">
-                            <span class="field-label">Location:</span>
-                            <div class="field-val" style="font-size:10px;">${escapeHtml(bts.location_requirements || 'Standard')}</div>
+                            <span class="field-label" style="font-size:9px;">CAM:</span>
+                            <div class="field-val" style="font-size:9px;">${escapeHtml(bts.camera_suggestions || 'Static')}</div>
                         </div>
                         <div class="log-item">
-                            <span class="field-label">Lighting:</span>
-                            <div class="field-val" style="font-size:10px;">${escapeHtml(bts.lighting_requirements || 'Standard')}</div>
-                        </div>
-                        <div class="log-item">
-                            <span class="field-label">Sound:</span>
-                            <div class="field-val" style="font-size:10px;">${escapeHtml(bts.sound_requirements || 'Sync')}</div>
-                        </div>
-                        <div class="log-item">
-                            <span class="field-label">Camera:</span>
-                            <div class="field-val" style="font-size:10px;">${escapeHtml(bts.camera_suggestions || 'Static')}</div>
+                            <span class="field-label" style="font-size:9px;">LIGHT:</span>
+                            <div class="field-val" style="font-size:9px;">${escapeHtml(bts.lighting_requirements || 'Standard')}</div>
                         </div>
                     </div>
-                    <div class="prod-field mt-2">
-                        <span class="field-label"><i class="fas fa-shield-alt"></i> Safety/Concerns:</span>
-                        <div class="field-val" style="color:#ef4444; font-size:11px;">${formatVal(bts.safety_concerns)}</div>
-                    </div>
-                </div>
-
-                <div class="mt-3 d-flex flex-wrap gap-1">
-                    ${s.stunts ? `<span class="scene-tag" style="background:#ef4444; color:white; border:none; font-size:10px;">🔥 STUNTS: ${escapeHtml(bts.stunt_coordination || 'YES')}</span>` : ''}
-                    ${s.vfx ? `<span class="scene-tag" style="background:#3b82f6; color:white; border:none; font-size:10px;">✨ VFX: ${escapeHtml(bts.vfx_requirements || 'YES')}</span>` : ''}
                 </div>
             </div>
           </div>
         </div>
+        
+        <!-- Crafts Explorer -->
+        <div class="crafts-explorer mt-3">
+            <div class="scene-body-label" style="text-align:center; font-size:14px; margin-bottom:15px; color:var(--accent-gold);">
+                <i class="fas fa-clapperboard"></i> Full 24-Crafts Analysis
+            </div>
+            ${renderCraftsSection(s, 'pre_production', 'Pre-Production', 'fa-pencil-ruler')}
+            ${renderCraftsSection(s, 'production_on_set', 'Production', 'fa-video')}
+            ${renderCraftsSection(s, 'post_production', 'Post-Production', 'fa-layer-group')}
+        </div>
       </div>
-    </div>
-  `;
+    </div>`;
+}
+
+function renderCraftsSection(scene, phaseKey, title, phaseIcon) {
+    const crafts = (scene.production_crafts && scene.production_crafts[phaseKey]) || {};
+
+    // Mapping internal keys to display names and icons
+    const craftMap = {
+        // Pre-Production
+        direction: { name: "1. Direction", icon: "fa-film" },
+        script_writing: { name: "2. Script Writing", icon: "fa-pen-nib" },
+        casting: { name: "3. Casting", icon: "fa-user-check" },
+
+        // Production
+        acting_junior_artists: { name: "4. Acting/Junior Artists", icon: "fa-people-group" },
+        cinematography: { name: "5. Cinematography", icon: "fa-camera-movie" },
+        technical_unit: { name: "6. Technical Unit", icon: "fa-tools" },
+        outdoor_lightmen: { name: "7. Outdoor Lightmen", icon: "fa-lightbulb" },
+        stunt_direction: { name: "8. Stunt Direction", icon: "fa-hand-fist" },
+        choreography: { name: "9. Choreography", icon: "fa-child-reaching" },
+        art_direction: { name: "10. Art Direction", icon: "fa-paint-roller" },
+        makeup: { name: "11. Makeup", icon: "fa-magic" },
+        costume_designing: { name: "12. Costume Designing", icon: "fa-shirt" },
+        production_assistance: { name: "13. Production Assistance", icon: "fa-list-check" },
+        production_executive: { name: "14. Production Executive", icon: "fa-briefcase" },
+        studio_workers: { name: "15. Studio Workers", icon: "fa-hammer" },
+        production_women: { name: "16. Production Women", icon: "fa-person-dress" },
+        still_photography: { name: "17. Still Photography", icon: "fa-camera" },
+        junior_artist_agent: { name: "18. Junior Artist Agent", icon: "fa-address-book" },
+        cinema_drivers: { name: "19. Cinema Drivers", icon: "fa-bus" },
+
+        // Post
+        editing: { name: "20. Editing", icon: "fa-scissors" },
+        audiography_sound: { name: "21. Audiography/Sound", icon: "fa-microphone-lines" },
+        music: { name: "22. Music", icon: "fa-music" },
+        dubbing_artist: { name: "23. Dubbing Artist", icon: "fa-comment-dots" },
+        publicity_designing: { name: "24. Publicity Designing", icon: "fa-bullhorn" }
+    };
+
+    const cards = Object.keys(crafts).map(key => {
+        const info = craftMap[key] || { name: key.replace(/_/g, ' '), icon: "fa-cube" };
+        const content = crafts[key];
+        return `
+            <div class="craft-card">
+                <div class="craft-header">
+                    <div class="craft-icon"><i class="fas ${info.icon}"></i></div>
+                    <div class="craft-name">${info.name}</div>
+                </div>
+                <div class="craft-content">
+                    ${content ? escapeHtml(content) : '<span class="craft-empty">No specific requirements mentioned in text.</span>'}
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    if (!cards) return '';
+
+    return `
+        <div class="craft-phase-section">
+            <div class="craft-phase-title">
+                <i class="fas ${phaseIcon}"></i> ${title}
+            </div>
+            <div class="craft-grid">
+                ${cards}
+            </div>
+        </div>
+    `;
 }
 
 function toggleScene(sceneNum) {
     const card = document.getElementById(`scene-card-${sceneNum}`);
-    if (card) card.classList.toggle('expanded');
+    if (!card) return;
+    const wasExpanded = card.classList.contains('expanded');
+    card.classList.toggle('expanded');
+    // Lazy-generate the scene image on first expand
+    if (!wasExpanded && !sceneImageCache[sceneNum]) {
+        const scene = allScenes.find(s => s.scene_number === sceneNum);
+        if (scene) generateSceneImage(scene);
+    }
+}
+
+async function generateSceneImage(scene) {
+    const sceneNum = scene.scene_number;
+    if (sceneImageCache[sceneNum]) return; // already loading or done
+    sceneImageCache[sceneNum] = 'loading';
+
+    const imgContainer = document.getElementById(`scene-img-${sceneNum}`);
+    if (!imgContainer) return;
+
+    // Show skeleton loader
+    imgContainer.innerHTML = `
+        <div class="scene-img-loader">
+            <div class="scene-img-spinner"></div>
+            <span>Generating cinematic image...</span>
+        </div>`;
+    imgContainer.style.display = 'block';
+
+    try {
+        const res = await fetch(`${API_BASE}/api/generate-scene-image`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                scene_number: sceneNum,
+                heading: scene.heading || '',
+                time_of_day: scene.time_of_day || 'DAY',
+                int_ext: scene.int_ext || 'EXT',
+                location: scene.location_detail || scene.location || '',
+                tone: scene.tone || 'Neutral',
+                genre: scene.genre || 'Drama',
+                characters: (scene.characters || []).slice(0, 4),
+                summary: scene.summary || ''
+            })
+        });
+
+        const data = await res.json();
+        if (data.success && data.image_data) {
+            sceneImageCache[sceneNum] = 'done';
+            imgContainer.innerHTML = `
+                <div class="scene-img-wrapper">
+                    <div class="scene-img-badge">🎬 AI Scene Visual · ${data.provider || 'AI'}</div>
+                    <img
+                        src="${data.image_data}"
+                        alt="Scene ${sceneNum} visual"
+                        class="scene-generated-img"
+                        loading="lazy"
+                        onclick="openImageLightbox('${data.image_data}', 'Scene ${sceneNum} — ${escapeHtml(scene.heading || '')}')"
+                    />
+                    <div class="scene-img-caption">${escapeHtml(scene.heading || '')} · ${scene.time_of_day || 'DAY'}</div>
+                </div>`;
+        } else {
+            throw new Error(data.error || 'Image generation failed');
+        }
+    } catch (err) {
+        sceneImageCache[sceneNum] = 'error';
+        imgContainer.innerHTML = `
+            <div class="scene-img-error">
+                <span>🎞️</span>
+                <p>Could not generate image</p>
+                <small>${err.message}</small>
+                <button onclick="delete sceneImageCache[${sceneNum}]; generateSceneImage(allScenes.find(s=>s.scene_number===${sceneNum}))">Retry</button>
+            </div>`;
+    }
+}
+
+async function generateAllImages() {
+    if (!allScenes.length) { showToast('Analyze a script first!', 'error'); return; }
+
+    const btn = document.getElementById('gen-all-images-btn');
+    const originalText = btn.textContent;
+    btn.disabled = true;
+
+    const scenesToGen = allScenes.filter(s => !sceneImageCache[s.scene_number]);
+    if (scenesToGen.length === 0) {
+        showToast('All scene visuals are already generated! ✨', 'info');
+        btn.disabled = false;
+        return;
+    }
+
+    showToast(`Starting batch generation for ${scenesToGen.length} scenes...`, 'info');
+
+    // Simple concurrency limiter (max 3 at a time)
+    const limit = 3;
+    let running = 0;
+    let index = 0;
+    let completed = 0;
+
+    const processNext = async () => {
+        if (index >= scenesToGen.length) return;
+
+        const scene = scenesToGen[index++];
+        running++;
+
+        btn.textContent = `⏳ Generating (${Math.round((completed / scenesToGen.length) * 100)}%)`;
+
+        try {
+            await generateSceneImage(scene);
+        } catch (e) {
+            console.error(`Batch gen failed for scene ${scene.scene_number}`, e);
+        } finally {
+            running--;
+            completed++;
+            btn.textContent = `⏳ Generating (${Math.round((completed / scenesToGen.length) * 100)}%)`;
+            await processNext();
+        }
+    };
+
+    const starters = [];
+    for (let i = 0; i < Math.min(limit, scenesToGen.length); i++) {
+        starters.push(processNext());
+    }
+
+    await Promise.all(starters);
+
+    btn.disabled = false;
+    btn.textContent = originalText;
+    showToast('Batch generation complete! 🎬', 'success');
+}
+
+function openImageLightbox(src, caption) {
+    const lb = document.createElement('div');
+    lb.id = 'img-lightbox';
+    lb.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:zoom-out;';
+    lb.innerHTML = `
+        <div style="position:absolute;top:20px;right:24px;font-size:28px;color:white;cursor:pointer;" onclick="this.parentElement.remove()">✕</div>
+        <img src="${src}" style="max-width:90vw;max-height:80vh;border-radius:12px;box-shadow:0 0 60px rgba(0,0,0,0.8);" />
+        <div style="color:rgba(255,255,255,0.7);margin-top:16px;font-size:13px;font-family:inherit;">${caption}</div>`;
+    lb.addEventListener('click', e => { if (e.target === lb) lb.remove(); });
+    document.body.appendChild(lb);
 }
 
 function getTimeTag(tod) {
@@ -693,3 +824,39 @@ function downloadBlob(blob, filename) {
     a.click();
     URL.revokeObjectURL(url);
 }
+
+/**
+ * Department Sheet Logic
+ */
+function switchDept(dept) {
+    // UI: Active tab state
+    document.querySelectorAll('.dept-tab').forEach(btn => {
+        const btnText = btn.textContent.trim().toUpperCase();
+        btn.classList.toggle('active', btnText === dept.toUpperCase());
+    });
+
+    const container = document.getElementById('dept-sheet-content');
+    if (!container) return;
+
+    const sheets = analysisData?.department_sheets || {};
+    const items = sheets[dept.toUpperCase()] || [];
+
+    if (items.length === 0) {
+        container.innerHTML = `<div style="text-align:center; padding: 40px; color: var(--text-muted);">No requirements found for ${dept} in this script.</div>`;
+        return;
+    }
+
+    container.innerHTML = items.map(sheet => `
+        <div class="dept-sheet-item">
+            <div class="dept-sheet-header">${sheet.header}</div>
+            <div class="dept-sheet-vals">
+                ${Array.isArray(sheet.items) ? sheet.items.map(i => `• ${i}`).join('<br>') : (sheet.details || sheet.reqs || 'Requested')}
+            </div>
+        </div>
+    `).join('');
+}
+
+// Initializing App
+document.addEventListener('DOMContentLoaded', () => {
+    refreshAgentStatus();
+});
